@@ -15,9 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # create rollback tags
-  pages: write      # enable and deploy GitHub Pages
-  id-token: write   # required by actions/deploy-pages
+  contents: write   # push the gh-pages branch and create rollback tags
 
 # Never let two deployments race. Do not cancel in progress: a half-finished
 # Pages deployment is worse than a queued one.
@@ -84,33 +82,32 @@ jobs:
           COUNT=$(node -p "require('./bundles/versioning.json').sources.length")
           echo "source_count=$COUNT" >> "$GITHUB_OUTPUT"
 
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-        with:
-          # Enables Pages via the API on first run so this never has to be
-          # configured by hand in the repository settings.
-          enablement: true
+      # Tells GitHub Pages to serve the files as-is rather than running them
+      # through Jekyll, which would drop anything starting with an underscore.
+      - name: Mark output as non-Jekyll
+        run: touch bundles/.nojekyll
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: bundles
-
-  deploy:
-    name: Deploy to GitHub Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+      # Publish by pushing the build output to the gh-pages branch.
+      #
+      # This uses only `contents: write`. The alternative (actions/deploy-pages
+      # with configure-pages enablement) needs permission to CREATE the Pages
+      # site, which the workflow GITHUB_TOKEN does not have: it fails with
+      # "Create Pages site failed: Resource not accessible by integration".
+      - name: Publish to gh-pages
+        run: |
+          cd bundles
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Deploy ${{ steps.meta.outputs.deployment_id }} (${GITHUB_SHA::7})"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   verify:
     name: Verify public deployment
-    needs: [build, deploy]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
