@@ -1,0 +1,27 @@
+{
+  "name": "personalpaperback",
+  "version": "1.0.0",
+  "repositoryName": "Personal Paperback Repository",
+  "description": "A personal Paperback 0.8 extension repository.",
+  "baseURL": "https://powerbosa.github.io/personalpaperback",
+  "private": true,
+  "scripts": {
+    "bundle": "paperback bundle && npm run validate",
+    "bundle:demo": "node scripts/bundle-demo.mjs",
+    "validate": "node scripts/validate-manifest.mjs",
+    "validate:public": "node scripts/validate-public.mjs",
+    "health": "node scripts/gen-health.mjs",
+    "add-source": "node scripts/add-source.mjs",
+    "remove-source": "node scripts/remove-source.mjs",
+    "list-sources": "node scripts/list-sources.mjs"
+  },
+  "author": "powerbosa",
+  "license": "MIT",
+  "dependencies": {
+    "@paperback/toolchain": "0.8.7",
+    "@paperback/types": "0.8.7"
+  },
+  "devDependencies": {
+    "typescript": "4.9.5"
+  }
+}

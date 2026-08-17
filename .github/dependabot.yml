@@ -1,0 +1,23 @@
+version: 2
+
+updates:
+  # Keep GitHub Actions current — these are safe to bump and are where most
+  # security fixes land.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: monthly
+    ignore:
+      # NEVER auto-upgrade these. Paperback 0.9 uses a different extension API
+      # and a different repository manifest with no `buildTime` key. An
+      # automated bump to the 0.9 line would produce a repository that a
+      # Paperback 0.8 client cannot decode at all.
+      #
+      # These stay pinned to 0.8.7 and are only ever changed deliberately.
+      - dependency-name: "@paperback/toolchain"
+      - dependency-name: "@paperback/types"

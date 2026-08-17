@@ -1,0 +1,181 @@
+name: Build, Validate & Deploy
+
+# Everything after a push is automatic: build -> validate -> deploy ->
+# verify the PUBLIC deployment -> tag a rollback point.
+#
+# The workflow is deliberately NOT considered successful just because the
+# bundle step finished. It only passes if the live GitHub Pages URLs serve a
+# schema-valid Paperback 0.8 repository.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/paperback-batcave-deploy-t4vsyo
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create rollback tags
+  pages: write      # enable and deploy GitHub Pages
+  id-token: write   # required by actions/deploy-pages
+
+# Never let two deployments race. Do not cancel in progress: a half-finished
+# Pages deployment is worse than a queued one.
+concurrency:
+  group: paperback-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and validate
+    runs-on: ubuntu-latest
+    outputs:
+      deployment_id: ${{ steps.meta.outputs.deployment_id }}
+      source_count: ${{ steps.count.outputs.source_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Derive deployment id
+        id: meta
+        run: |
+          echo "deployment_id=$(date -u +%Y%m%d-%H%M%S)-r${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      # `npm ci` installs exactly what package-lock.json pins. Combined with
+      # the exact-version dependencies in package.json, this is what stops the
+      # project drifting onto a Paperback 0.9 toolchain.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify toolchain is pinned to the Paperback 0.8 line
+        run: |
+          TOOLCHAIN=$(node -p "require('@paperback/toolchain/package.json').version")
+          TYPES=$(node -p "require('@paperback/types/package.json').version")
+          echo "toolchain=$TOOLCHAIN types=$TYPES"
+          if [ "$TOOLCHAIN" != "0.8.7" ] || [ "$TYPES" != "0.8.7" ]; then
+            echo "::error::Expected @paperback/toolchain and @paperback/types at 0.8.7, got $TOOLCHAIN / $TYPES."
+            exit 1
+          fi
+
+      # Proves the full pipeline still works, using a source that makes no
+      # network requests. Runs before the production build so a toolchain
+      # regression is reported as such rather than as a mystery empty repo.
+      - name: Pipeline self-test (demo source)
+        run: npm run bundle:demo
+
+      # The real build. src/ is the production source list.
+      - name: Build repository
+        run: npm run bundle
+
+      - name: Generate health.json
+        env:
+          DEPLOYMENT_ID: ${{ steps.meta.outputs.deployment_id }}
+        run: npm run health
+
+      - name: Record source count
+        id: count
+        run: |
+          COUNT=$(node -p "require('./bundles/versioning.json').sources.length")
+          echo "source_count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          # Enables Pages via the API on first run so this never has to be
+          # configured by hand in the repository settings.
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: bundles
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify:
+    name: Verify public deployment
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Fetches the real public HTTPS URLs, re-runs the full schema validation
+      # against what the CDN actually served, and checks every referenced
+      # asset. Retries while Pages propagates rather than failing on a
+      # transient 404.
+      - name: Validate the live repository over HTTPS
+        run: npm run validate:public
+
+  rollback-point:
+    name: Tag rollback point
+    needs: [build, verify]
+    runs-on: ubuntu-latest
+    # Only tag deployments that actually passed public verification.
+    if: success()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create rollback tag
+        env:
+          DEPLOYMENT_ID: ${{ needs.build.outputs.deployment_id }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          TAG="deploy-${DEPLOYMENT_ID}"
+          git tag -a "$TAG" -m "Verified deployment ${DEPLOYMENT_ID}"
+          git push origin "$TAG"
+
+          # Moving pointer to the most recent verified-good deployment.
+          git tag -f last-known-good
+          git push -f origin last-known-good
+
+          echo "Tagged $TAG and moved last-known-good."
+
+      - name: Deployment summary
+        env:
+          DEPLOYMENT_ID: ${{ needs.build.outputs.deployment_id }}
+          SOURCE_COUNT: ${{ needs.build.outputs.source_count }}
+        run: |
+          BASE="https://powerbosa.github.io/personalpaperback"
+          {
+            echo "## Paperback 0.8 Repository"
+            echo ""
+            echo '```'
+            echo "Toolchain:          0.8.7"
+            echo "Types:              0.8.7"
+            echo "Sources:            ${SOURCE_COUNT}"
+            echo "Manifest:           VALID"
+            echo "Public deployment:  VALID"
+            echo "Repository URL:     ${BASE}/"
+            echo "Health URL:         ${BASE}/health.json"
+            echo "Deployment ID:      ${DEPLOYMENT_ID}"
+            echo '```'
+            echo ""
+            echo "Paste the Repository URL into Paperback 0.8."
+          } >> "$GITHUB_STEP_SUMMARY"
