@@ -35,9 +35,15 @@ To see what's installed: `npm run list-sources`
 
 ## D. Redeploy
 
-Any push to `main` redeploys. To redeploy without changing anything:
+Any push to the branch `claude/paperback-batcave-deploy-t4vsyo` redeploys.
+To redeploy without changing anything:
 
 GitHub → **Actions** → **Build, Validate & Deploy** → **Run workflow**
+
+> The infrastructure currently lives on that branch, not on `main` — `main` still
+> holds only the original README. The workflow is already configured to deploy from
+> `main` as well, so if you merge the branch into `main`, everything keeps working
+> and you can then just push to `main`. Nothing breaks if you don't merge.
 
 ## E. Check whether it worked
 
