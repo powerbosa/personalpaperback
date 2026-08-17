@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "manifest": "valid",
+  "toolchain": "0.8.7",
+  "types": "0.8.7",
+  "paperbackVersion": "0.8",
+  "sourceCount": 0,
+  "sources": [],
+  "lastDeploy": "2026-08-17T22:13:56.056Z",
+  "deploymentId": "20260817-221349-r4"
+}
