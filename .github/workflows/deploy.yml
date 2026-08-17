@@ -30,6 +30,7 @@ jobs:
     outputs:
       deployment_id: ${{ steps.meta.outputs.deployment_id }}
       source_count: ${{ steps.count.outputs.source_count }}
+      build_time: ${{ steps.count.outputs.build_time }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,11 +77,13 @@ jobs:
           DEPLOYMENT_ID: ${{ steps.meta.outputs.deployment_id }}
         run: npm run health
 
-      - name: Record source count
+      - name: Record manifest facts
         id: count
         run: |
           COUNT=$(node -p "require('./bundles/versioning.json').sources.length")
+          BUILD_TIME=$(node -p "require('./bundles/versioning.json').buildTime")
           echo "source_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "build_time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
 
       # Tells GitHub Pages to serve the files as-is rather than running them
       # through Jekyll, which would drop anything starting with an underscore.
@@ -123,6 +126,10 @@ jobs:
       # asset. Retries while Pages propagates rather than failing on a
       # transient 404.
       - name: Validate the live repository over HTTPS
+        env:
+          # Makes the check wait for the CDN to actually serve THIS build,
+          # so a cached copy of the previous deployment cannot pass.
+          EXPECTED_BUILD_TIME: ${{ needs.build.outputs.build_time }}
         run: npm run validate:public
 
   rollback-point:

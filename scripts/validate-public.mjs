@@ -9,6 +9,12 @@
  *
  * Usage: node scripts/validate-public.mjs [baseURL]
  *   baseURL defaults to the `baseURL` field in package.json.
+ *
+ * Set EXPECTED_BUILD_TIME to the buildTime of the build that was just
+ * deployed. The script then waits until the CDN actually serves that build
+ * before validating it. Without this, a cached copy of the PREVIOUS
+ * deployment can satisfy every check and the run goes green while the new
+ * build is not live yet.
  */
 
 import { promises as fs } from 'node:fs';
@@ -100,21 +106,52 @@ async function main() {
   }
 
   // --- 2. The manifest Paperback resolves from that base URL.
-  const manifestResponse = await fetchWithRetry(manifestURL, 'versioning.json');
-  if (!manifestResponse.ok) {
-    errors.push(
-      `PUBLIC: ${manifestURL} returned ${manifestResponse.error ?? `HTTP ${manifestResponse.status}`}`
-    );
-    fail(errors);
-  }
-  console.log(`    versioning.json     HTTP ${manifestResponse.status}`);
-
+  //
+  // When EXPECTED_BUILD_TIME is set, keep re-fetching until the CDN stops
+  // serving a cached copy of the previous deployment. Otherwise a stale but
+  // structurally valid manifest would pass every check below and the run
+  // would go green without the new build actually being live.
+  const expectedBuildTime = process.env.EXPECTED_BUILD_TIME?.trim();
+  let manifestResponse;
   let manifest;
-  try {
-    manifest = JSON.parse(manifestResponse.body);
-  } catch (error) {
-    errors.push(`PUBLIC: versioning.json is not valid JSON: ${error.message}`);
-    fail(errors);
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    manifestResponse = await fetchWithRetry(manifestURL, 'versioning.json');
+    if (!manifestResponse.ok) {
+      errors.push(
+        `PUBLIC: ${manifestURL} returned ${manifestResponse.error ?? `HTTP ${manifestResponse.status}`}`
+      );
+      fail(errors);
+    }
+
+    try {
+      manifest = JSON.parse(manifestResponse.body);
+    } catch (error) {
+      errors.push(`PUBLIC: versioning.json is not valid JSON: ${error.message}`);
+      fail(errors);
+    }
+
+    if (!expectedBuildTime || manifest?.buildTime === expectedBuildTime) break;
+
+    if (attempt === MAX_ATTEMPTS) {
+      errors.push(
+        `PUBLIC: the deployed versioning.json is stale. Expected buildTime ` +
+        `${expectedBuildTime} but the CDN is still serving ${manifest?.buildTime}. ` +
+        'The new build did not become live within the propagation window.'
+      );
+      fail(errors);
+    }
+
+    console.log(
+      `    versioning.json: still serving the previous build ` +
+      `(${manifest?.buildTime}), waiting (${attempt}/${MAX_ATTEMPTS})`
+    );
+    await sleep(RETRY_DELAY_MS);
+  }
+
+  console.log(`    versioning.json     HTTP ${manifestResponse.status}`);
+  if (expectedBuildTime) {
+    console.log(`    freshness           serving this build (${expectedBuildTime})`);
   }
 
   // --- 3. Re-run the exact same schema validation against the served bytes.
